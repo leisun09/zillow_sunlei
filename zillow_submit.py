@@ -134,7 +134,7 @@ def getDateFeature(train_df): #base-->0.064924
 #    train_df['transaction_day'] = train_df.transactiondate.dt.weekday.astype(np.int64)
 #    train_df['transaction_season'] = train_df['transaction_month'].apply(seas)
     #--- Dropping the 'transactiondate' column now ---
-    train_df = train_df.drop('transactiondate', 1)
+    train_df.drop('transactiondate', axis=1, inplace=True)
 
 def getNewFeature(train_df): #base:0.064992
     getDateFeature(train_df)
@@ -259,56 +259,11 @@ xgb_pred1 = model.predict(dtest)
 
 xgb_pred = xgb_pred1
 
-print( "\nCombined XGBoost predictions:" )
-print( pd.DataFrame(xgb_pred).head() )
-
-################
-################
-##    OLS     ##
-################
-################
-
-# This section is derived from the1owl's notebook:
-#    https://www.kaggle.com/the1owl/primer-for-the-zillow-pred-approach
-# which I (Andy Harless) updated and made into a script:
-#    https://www.kaggle.com/aharless/updated-script-version-of-the1owl-s-basic-ols
-
-np.random.seed(17)
-random.seed(17)
-
-train = pd.read_csv("../data/train_2016_v2.csv", parse_dates=["transactiondate"])
-properties = pd.read_csv("../data/properties_2016.csv")
+#linear regression
 submission = pd.read_csv("../data/sample_submission.csv")
-print(len(train),len(properties),len(submission))
-
-def get_features(df):
-    df["transactiondate"] = pd.to_datetime(df["transactiondate"])
-    df["transactiondate_year"] = df["transactiondate"].dt.year
-    df["transactiondate_month"] = df["transactiondate"].dt.month
-    df['transactiondate'] = df['transactiondate'].dt.quarter
-    df = df.fillna(-1.0)
-    return df
-
-def MAE(y, ypred):
-    #logerror=log(Zestimate)−log(SalePrice)
-    return np.sum([abs(y[i]-ypred[i]) for i in range(len(y))]) / len(y)
-
-train = pd.merge(train, properties, how='left', on='parcelid')
-y = train['logerror'].values
-test = pd.merge(submission, properties, how='left', left_on='ParcelId', right_on='parcelid')
-properties = [] #memory
-
-exc = [train.columns[c] for c in range(len(train.columns)) if train.dtypes[c] == 'O'] + ['logerror','parcelid']
-col = [c for c in train.columns if c not in exc]
-
-train = get_features(train[col])
-test['transactiondate'] = '2016-01-01' #should use the most common training date
-test = get_features(test[col])
-
+x_train = x_train.fillna(0)
 reg = LinearRegression(n_jobs=-1)
-reg.fit(train, y); print('fit...')
-print(MAE(y, reg.predict(train)))
-train = [];  y = [] #memory
+reg.fit(x_train, y_train);
 
 test_dates = ['2016-10-01','2016-11-01','2016-12-01','2017-10-01','2017-11-01','2017-12-01']
 test_columns = ['201610','201611','201612','201710','201711','201712']
@@ -328,13 +283,17 @@ xgb_weight0 = XGB_WEIGHT / (1 - OLS_WEIGHT)
 baseline_weight0 =  BASELINE_WEIGHT / (1 - OLS_WEIGHT)
 pred0 = xgb_weight0*xgb_pred + baseline_weight0*BASELINE_PRED + lgb_weight*p_test
 
-print( "\nCombined XGB/LGB/baseline predictions:" )
-print( pd.DataFrame(pred0).head() )
-
+x_test.fillna(0,inplace=True)
+for c, dtype in zip(x_test.columns, x_test.dtypes):
+    print(c, dtype, max(x_test[c]), sep='\t')
+    
 print( "\nPredicting with OLS and combining with XGB/LGB/baseline predicitons: ..." )
 for i in range(len(test_dates)):
-    test['transactiondate'] = test_dates[i]
-    pred = OLS_WEIGHT*reg.predict(get_features(test)) + (1-OLS_WEIGHT)*pred0
+    x_test['transactiondate'] = test_dates[i]
+    getDateFeature(x_test)
+    for c, dtype in zip(x_test.columns, x_test.dtypes):
+        print(i, c, dtype, max(x_test[c]), sep='\t')    
+    pred = OLS_WEIGHT*reg.predict(x_test) + (1-OLS_WEIGHT)*pred0
     submission[test_columns[i]] = [float(format(x, '.4f')) for x in pred]
     print('predict...', i)
 

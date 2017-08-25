@@ -125,6 +125,10 @@ print('Reading training data, properties and test data.')
 train = pd.read_csv("../data/train_2016_v2.csv")
 properties = pd.read_csv('../data/properties_2016.csv')
 test = pd.read_csv('../data/sample_submission.csv')
+properties_add = pd.read_csv('../data/properties_latlng_cluster.csv')
+
+properties = properties.merge(properties_add, how='left', on='parcelid')
+print(properties.columns)
 
 print('Encoding missing data.')
 for column in properties.columns:
@@ -140,7 +144,8 @@ train_with_properties = train.merge(properties, how='left', on='parcelid')
 getNewFeature(train_with_properties)
 
 dropcol = ['parcelid', 'logerror', 'transactiondate'] + ['finishedsquarefeet12', 'taxdelinquencyyear', 'N-LivingAreaProp2', 'N-ExtraSpace-2', 'finishedsquarefeet6', 'latitude', 'N-LivingAreaProp', 'taxvaluedollarcnt', 'calculatedfinishedsquarefeet', 'heatingorsystemtypeid', 'buildingqualitytypeid', 'finishedfloor1squarefeet', 'N-ExtraRooms', 'N-TotalRooms', 'garagetotalsqft', 'garagecarcnt', 'regionidcity', 'propertycountylandusecode', 'landtaxvaluedollarcnt', 'yardbuildingsqft17', 'unitcnt', 'N-latitude-round', 'structuretaxvaluedollarcnt', 'N-ValueProp', 'propertyzoningdesc', 'censustractandblock', 'bathroomcnt', 'N-location', 'N-AvRoomSize', 'hashottuborspa', 'fullbathcnt']
-candicol = [col for col in train_with_properties.columns if not col in dropcol]
+addcol = ['cluster_label_1500m', 'cluster_latitude_1500m', 'cluster_longitude_1500m', 'cluster_label_1000m', 'cluster_latitude_1000m', 'cluster_longitude_1000m', 'cluster_label_500m', 'cluster_latitude_500m', 'cluster_longitude_500m', 'cluster_label_250m', 'cluster_latitude_250m', 'cluster_longitude_250m', 'cluster_label_100m', 'cluster_latitude_100m', 'cluster_longitude_100m', 'cluster_label_50m', 'cluster_latitude_50m', 'cluster_longitude_50m', 'cluster_label_25m', 'cluster_latitude_25m', 'cluster_longitude_25m']
+candicol = [col for col in train_with_properties.columns if not col in dropcol+addcol]
 
 train_index = []
 valid_index = []
@@ -153,26 +158,43 @@ for i in range(len(train_with_properties)):
 train_dataset = train_with_properties.iloc[train_index]
 valid_dataset = train_with_properties.iloc[valid_index]
 
-x_train = train_dataset.drop(dropcol , axis=1)
-y_train = train_dataset['logerror'].values
-x_valid = valid_dataset.drop(dropcol, axis=1)
-y_valid = valid_dataset['logerror'].values
+base = []
+while(len(set(addcol)-set(base)) > 0):
+    curlist = []
+    for add in [v for v in addcol if not v in base]:
+        curadd = base + [add,]
+        x_train = train_dataset[list(set(candicol + curadd))]
+        y_train = train_dataset['logerror'].values
+        x_valid = valid_dataset[list(set(candicol + curadd))]
+        y_valid = valid_dataset['logerror'].values
+        
+        d_train = xgb.DMatrix(x_train, label=y_train)
+        d_valid = xgb.DMatrix(x_valid, label=y_valid)
+        
+        print('Training the model.')
+        # xgboost params
+        params = {
+            'eta': 0.033,
+            'max_depth': 4,
+            'subsample': 0.80,
+            'objective': 'reg:linear',
+            'eval_metric': 'mae',
+            'silent': 1
+        }
+        
+        watchlist = [(d_train, 'train'), (d_valid, 'valid')]
+        model = xgb.train(params, d_train, 500, watchlist, early_stopping_rounds=100,
+                          verbose_eval=1000)
+        
+        best = model.best_score
+        curlist.append([curadd, best])
+        print(curadd, best, sep='\t')
+    
+    curlist = sorted(curlist, key=lambda x:x[1])
+    with open('out.data','a') as outfile:
+        for alist in curlist:
+            outfile.write('\t'.join([str(a) for a in alist]) + '\n')
+            
+    base = curlist[0][0]
 
-d_train = xgb.DMatrix(x_train, label=y_train)
-d_valid = xgb.DMatrix(x_valid, label=y_valid)
-
-print('Training the model.')
-# xgboost params
-params = {
-    'eta': 0.033,
-    'max_depth': 4,
-    'subsample': 0.80,
-    'objective': 'reg:linear',
-    'eval_metric': 'mae',
-    'silent': 1
-}
-
-watchlist = [(d_train, 'train'), (d_valid, 'valid')]
-model = xgb.train(params, d_train, 500, watchlist, early_stopping_rounds=100,
-                  verbose_eval=1000)
 
